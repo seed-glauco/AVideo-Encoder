@@ -10,6 +10,31 @@ function local_get_contents($path) {
     return @file_get_contents($path);
 }
 
+function get_ffmpeg($ignoreGPU=false) {
+    global $global;
+    //return 'ffmpeg -user_agent "'.getSelfUserAgent("FFMPEG").'" ';
+    //return 'ffmpeg -headers "User-Agent: '.getSelfUserAgent("FFMPEG").'" ';
+    $ffmpeg = 'ffmpeg  ';
+    if (empty($ignoreGPU) && !empty($global['ffmpegGPU'])) {
+        $ffmpeg .= ' --enable-nvenc ';
+    }
+    if (!empty($global['ffmpeg'])) {
+        $ffmpeg = "{$global['ffmpeg']}{$ffmpeg}";
+    }
+    return $ffmpeg;
+}
+
+function get_ffprobe() {
+    global $global;
+    //return 'ffmpeg -user_agent "'.getSelfUserAgent("FFMPEG").'" ';
+    //return 'ffmpeg -headers "User-Agent: '.getSelfUserAgent("FFMPEG").'" ';
+    $ffmpeg = 'ffprobe  ';
+    if (!empty($global['ffmpeg'])) {
+        $ffmpeg = "{$global['ffmpeg']}{$ffmpeg}";
+    }
+    return $ffmpeg;
+}
+
 function url_set_file_context($Url, $ctx = "") {
     // I wasn't sure what to call this function because I'm not sure exactly what it does.
     // But I know that it is needed to display the progress indicators
@@ -39,10 +64,20 @@ function url_set_file_context($Url, $ctx = "") {
     }
 }
 
+function getSelfUserAgent($complement = "") {
+    global $global;
+    $agent = 'AVideoEncoder ';
+    $agent .= parse_url($global['webSiteRootURL'], PHP_URL_HOST);
+    $agent .= " {$complement}";
+    return $agent;
+}
+
 function url_get_contents($Url, $ctx = "") {
+    global $global;
+    $agent = getSelfUserAgent();
     if (empty($ctx)) {
         $opts = array(
-            'http' => array('header' => "User-Agent:AVideoAgent/1.0\r\n"),
+            'http' => array('header' => "User-Agent: {$agent}\r\n"),
             "ssl" => array(
                 "verify_peer" => false,
                 "verify_peer_name" => false,
@@ -76,14 +111,20 @@ function url_get_contents($Url, $ctx = "") {
         }
     } else if (function_exists('curl_init')) {
         $ch = curl_init();
+        curl_setopt($ch, CURLOPT_USERAGENT, $agent);
         curl_setopt($ch, CURLOPT_URL, $Url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
         $output = curl_exec($ch);
         curl_close($ch);
         return remove_utf8_bom($output);
     }
-
-    return remove_utf8_bom(@file_get_contents($Url, false, $context));
+    $content = @file_get_contents($Url, false, $context);
+    if (empty($content)) {
+        return "";
+    }
+    return remove_utf8_bom($content);
 }
 
 function fetch_http_file_contents($url) {
@@ -417,6 +458,21 @@ function parseDurationToSeconds($str) {
     return intval($durationParts[2]) + ($minutes * 60);
 }
 
+function secondsToVideoTime($seconds) {
+    if (!is_numeric($seconds)) {
+        return $seconds;
+    }
+    $seconds = round($seconds);
+    $hours = floor($seconds / 3600);
+    $mins = floor($seconds / 60 % 60);
+    $secs = floor($seconds % 60);
+    return sprintf('%02d:%02d:%02d', $hours, $mins, $secs);
+}
+
+function parseSecondsToDuration($seconds) {
+    return secondsToVideoTime($seconds);
+}
+
 /**
  * 
  * @global type $global
@@ -446,6 +502,9 @@ function decideFromPlugin() {
     // convert the string to a json object
     $advancedCustom = json_decode($json_file);
     fixAdvancedCustom($advancedCustom);
+    if (!empty($advancedCustom->showOnlyEncoderAutomaticResolutions)) {
+        return array("mp4" => 7, "webm" => 8);
+    }
     if (
             empty($advancedCustom->doNotShowEncoderResolutionLow) && empty($advancedCustom->doNotShowEncoderResolutionSD) && empty($advancedCustom->doNotShowEncoderResolutionHD)) {
         return array("mp4" => 80, "webm" => 87);
@@ -474,11 +533,35 @@ function decideFromPlugin() {
     return array("mp4" => 80, "webm" => 87);
 }
 
+/**
+ * Return the formats table column order
+ * @return int
+ */
 function decideFormatOrder() {
     if (!empty($_GET['webm']) && empty($_POST['webm'])) {
         $_POST['webm'] = $_GET['webm'];
     }
     error_log("decideFormatOrder: " . json_encode($_POST));
+    if (!empty($_POST['inputAutoHLS']) && strtolower($_POST['inputAutoHLS']) !== "false") {
+        error_log("decideFormatOrder: auto HLS");
+        $_SESSION['format'] = 'inputAutoHLS';
+        return (6);
+    } else
+    if (!empty($_POST['inputAutoMP4']) && strtolower($_POST['inputAutoMP4']) !== "false") {
+        error_log("decideFormatOrder: auto MP4");
+        $_SESSION['format'] = 'inputAutoMP4';
+        return (7);
+    } else
+    if (!empty($_POST['inputAutoWebm']) && strtolower($_POST['inputAutoWebm']) !== "false") {
+        error_log("decideFormatOrder: auto WebM");
+        $_SESSION['format'] = 'inputAutoWebm';
+        return (8);
+    } else
+    if (!empty($_POST['inputAutoAudio']) && strtolower($_POST['inputAutoAudio']) !== "false") {
+        error_log("decideFormatOrder: auto Audio");
+        $_SESSION['format'] = 'inputAutoAudio';
+        return (60);
+    } else
     if (!empty($_POST['inputHLS']) && strtolower($_POST['inputHLS']) !== "false") {
         error_log("decideFormatOrder: Multi bitrate HLS encrypted");
         return (9);
@@ -621,8 +704,8 @@ function ip_is_private($ip) {
 function encryptPassword($password, $streamerURL) {
     $url = "{$streamerURL}objects/encryptPass.json.php?pass=" . urlencode($password);
     $streamerEncrypt = json_decode(url_get_contents($url));
-    if(empty($streamerEncrypt) || empty($streamerEncrypt->encryptedPassword)){
-        error_log("ERROR on encryptPassword ".$url);
+    if (empty($streamerEncrypt) || empty($streamerEncrypt->encryptedPassword)) {
+        error_log("ERROR on encryptPassword " . $url);
     }
     return $streamerEncrypt->encryptedPassword;
 }
@@ -633,6 +716,9 @@ function zipDirectory($destinationFile) {
     $zipPath = rtrim($destinationFile, "/") . ".zip";
     // Initialize archive object
     $zip = new ZipArchive();
+    if(!is_object($zip)){
+        $zip = new \ZipArchive;
+    }
     $zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE);
 
     // Create recursive directory iterator
@@ -659,11 +745,25 @@ function zipDirectory($destinationFile) {
 }
 
 function directorysize($dir) {
-    $size = 0;
-    foreach (glob(rtrim($dir, '/') . '/*', GLOB_NOSORT) as $each) {
-        $size += is_file($each) ? filesize($each) : directorysize($each);
+
+    $command = "du -sb {$dir}";
+    exec($command . " 2>&1", $output, $return_val);
+    if ($return_val !== 0) {
+        $size = 0;
+        foreach (glob(rtrim($dir, '/') . '/*', GLOB_NOSORT) as $each) {
+            $size += is_file($each) ? filesize($each) : directorysize($each);
+        }
+        return $size;
+    } else {
+        if (!empty($output[0])) {
+            preg_match("/^([0-9]+).*/", $output[0], $matches);
+        }
+        if (!empty($matches[1])) {
+            return intval($matches[1]);
+        }
+
+        return 0;
     }
-    return $size;
 }
 
 function make_path($path) {
@@ -677,10 +777,10 @@ function make_path($path) {
  * @global type $global
  * @param type $advancedCustom
  */
-function fixAdvancedCustom(&$advancedCustom){
+function fixAdvancedCustom(&$advancedCustom) {
     global $global;
     foreach ($global as $key => $value) {
-        if(isset($advancedCustom->$key)){
+        if (isset($advancedCustom->$key)) {
             $advancedCustom->$key = $value;
         }
     }
@@ -727,7 +827,6 @@ function rrmdir($dir) {
     }
 }
 
-
 function xss_esc($text) {
     if (empty($text)) {
         return "";
@@ -745,11 +844,172 @@ function xss_esc_back($text) {
     return $text;
 }
 
-function remove_utf8_bom($text){
-    if(strlen($text)>1000000){
+function remove_utf8_bom($text) {
+    if (empty($text)) {
+        return "";
+    }
+    if (strlen($text) > 1000000) {
         return $text;
     }
-    $bom = pack('H*','EFBBBF');
+    $bom = pack('H*', 'EFBBBF');
     $text = preg_replace("/^$bom/", '', $text);
     return $text;
+}
+
+function getSessionMD5() {
+    global $global;
+    return md5($global['webSiteRootURL'] . $global['systemRootPath']);
+}
+
+function getSessionId() {
+    global $global;
+    $obj = new stdClass();
+    $obj->md5 = getSessionMD5();
+    $obj->uniqueId = uniqid();
+    return base64_encode(json_encode($obj));
+}
+
+function validateSessionId($PHPSESSID) {
+    $json = base64_decode($PHPSESSID);
+    $obj = json_decode($json);
+    if (is_object($obj) && $obj->md5 == getSessionMD5()) {
+        return true;
+    }
+    return false;
+}
+
+function recreateSessionIdIfNotValid() {
+    $PHPSESSID = session_id();
+    if (!validateSessionId($PHPSESSID)) {
+        session_id(getSessionId());
+    }
+}
+
+function _session_id($PHPSESSID) {
+    if (validateSessionId($PHPSESSID)) {
+        session_id($PHPSESSID);
+    } else {
+        recreateSessionIdIfNotValid();
+    }
+}
+
+function _session_start(Array $options = array()) {
+    global $global;
+    try {
+        if (session_status() == PHP_SESSION_NONE) {
+            $md5 = getSessionMD5();
+            if (!empty($_REQUEST['PHPSESSID'])) {
+                //_session_id($_REQUEST['PHPSESSID']);
+                session_id($_REQUEST['PHPSESSID']);
+            } else {
+                $_GET['PHPSESSID'] = "";
+            }
+            //recreateSessionIdIfNotValid();
+            session_name("encoder{$md5}");
+            return session_start($options);
+        }
+    } catch (Exception $exc) {
+        _error_log("_session_start: " . $exc->getTraceAsString());
+        return false;
+    }
+}
+
+function getFileInfo($file) {
+    if (empty($file) || !file_exists($file)) {
+        return false;
+    }
+    $obj = new stdClass();
+    if (is_dir($file)) {
+        $obj->extension = "HLS";
+        $obj->resolution = "Adaptive";
+        $obj->size = directorysize($file);
+    } else {
+        $path_parts = pathinfo($file);
+        $obj->extension = $path_parts['extension'];
+        if ($obj->extension === "zip") {
+            $obj->extension = "HLS";
+            $obj->resolution = "Compressed";
+        } else {
+            preg_match("/([^_]{0,4})\.{$obj->extension}$/", $path_parts['basename'], $matches);
+            $obj->resolution = @$matches[1];
+        }
+        $obj->size = filesize($file);
+    }
+    $obj->humansize = humanFileSize($obj->size);
+    $obj->text = strtoupper($obj->extension) . " {$obj->resolution}: {$obj->humansize}";
+
+    return $obj;
+}
+
+function getPHPSessionIDURL() {
+    if (!empty($_GET['PHPSESSID'])) {
+        $p = $_GET['PHPSESSID'];
+    } else {
+        $p = session_id();
+    }
+    return "PHPSESSID={$p}";
+}
+
+function isSameDomain($url1, $url2) {
+    if (empty($url1) || empty($url2)) {
+        return false;
+    }
+    return (get_domain($url1) === get_domain($url2));
+}
+
+function get_domain($url) {
+    $pieces = parse_url($url);
+    $domain = isset($pieces['host']) ? $pieces['host'] : '';
+    if (empty($domain)) {
+        return false;
+    }
+    if (preg_match('/(?P<domain>[a-z0-9][a-z0-9\-]{1,63}\.[a-z\.]{2,6})$/i', $domain, $regs)) {
+        return rtrim($regs['domain'], '/');
+    } else {
+        $isIp = (bool) ip2long($pieces['host']);
+        if ($isIp) {
+            return $pieces['host'];
+        }
+    }
+    return false;
+}
+
+function isPIDRunning($pid) {
+    if ($pid < 1) {
+        return false;
+    }
+    return file_exists("/proc/$pid");
+}
+
+function execAsync($command) {
+    // If windows, else
+    if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+        //$pid = system($command . " > NUL");
+        pclose($pid = popen("start /B ". $command, "r")); 
+    } else {
+        $pid = exec($command . " > /dev/null 2>&1 & echo $!; ");
+    }
+    return $pid;
+}
+
+function execRun() {
+    global $global;
+    $php = getPHP() . " -f";
+    $cmd = "{$php} {$global['systemRootPath']}view/run.php";
+    return execAsync($cmd);
+}
+
+function getPHP() {
+    global $global;
+    if (!empty($global['php'])) {
+        $php = $global['php'];
+        if (file_exists($php)) {
+            return $php;
+        }
+    }
+    $php = PHP_BINDIR . "/php";
+    if (file_exists($php)) {
+        return $php;
+    }
+    return "php";
 }

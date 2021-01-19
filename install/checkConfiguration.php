@@ -4,7 +4,7 @@ if (file_exists("../videos/configuration.php")) {
     error_log("Can not create configuration again: ".  json_encode($_SERVER));
     exit;
 }
-$installationVersion = "3.0";
+$installationVersion = "3.3";
 
 header('Content-Type: application/json');
 
@@ -102,11 +102,14 @@ if ($mysqli->query($sql) !== TRUE) {
 $mysqli->close();
 
 $content = "<?php
+\$global['configurationVersion'] = 2;
 \$global['webSiteRootURL'] = '{$_POST['webSiteRootURL']}';
 \$global['systemRootPath'] = '{$_POST['systemRootPath']}';
+\$global['webSiteRootPath'] = '';
 
 \$global['disableConfigurations'] = false;
 \$global['disableBulkEncode'] = false;
+\$global['disableImportVideo'] = false;
 \$global['disableWebM'] = false;
 
 \$mysqlHost = '{$_POST['databaseHost']}';
@@ -118,6 +121,16 @@ $content = "<?php
 /**
  * Do NOT change from here
  */
+if(empty(\$global['webSiteRootPath'])){
+    preg_match('/https?:\/\/[^\/]+(.*)/i', \$global['webSiteRootURL'], \$matches);
+    if(!empty(\$matches[1])){
+        \$global['webSiteRootPath'] = \$matches[1];
+    }
+}
+if(empty(\$global['webSiteRootPath'])){
+    die('Please configure your webSiteRootPath');
+}
+
 
 require_once \$global['systemRootPath'].'objects/include_config.php';
 ";

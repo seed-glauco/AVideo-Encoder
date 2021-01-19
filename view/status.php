@@ -4,6 +4,8 @@ header('Content-Type: application/json');
 require_once dirname(__FILE__) . '/../videos/configuration.php';
 require_once '../objects/Encoder.php';
 
+$config = new Configuration();
+
 //$r = Encoder::sendFile("{$global['systemRootPath']}videos/1_tmpFile.mp4", 1, "mp4");var_dump($r);return;
 $obj = new stdClass();
 $obj->queue_size = 0;
@@ -13,6 +15,7 @@ $obj->msg = "";
 $obj->encoding = new stdClass();
 $obj->cmd = "";
 $obj->encoding_status = "";
+$obj->version = $config->getVersion();
 
 $obj->encoding = Encoder::isEncoding();
 //$obj->transferring = Encoder::isTransferring();
@@ -23,10 +26,7 @@ if(empty($obj->encoding['id'])){
     if(empty($obj->queue_list)){
         $obj->msg = "There is no file on queue";
     }else{
-        $cmd = PHP_BINDIR."/php -f {$global['systemRootPath']}view/run.php > /dev/null 2>/dev/null &";
-        //echo "** executing command {$cmd}\n";
-        exec($cmd);
-        $obj->cmd = $cmd;
+        execRun();
         $obj->msg = "We send the file to encode";
     }
 }else{

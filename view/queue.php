@@ -9,18 +9,31 @@ if(empty($_POST['fileURI'])){
 }
 
 if(!empty($_POST['user']) && !empty($_POST['pass']) && !empty($_POST['notifyURL'])){
-    error_log("Sent Login variables try to login");
-    Login::run($_POST['user'], $_POST['pass'], $_POST['notifyURL'], true);
+    error_log("login.json: Login::run");
+    $error = "Sent Login variables try to login";
+    if (isCommandLineInterface()) {
+        echo $error.PHP_EOL;
+    }
+    error_log($error);
+    Login::run($_POST['user'], $_POST['pass'], $_POST['notifyURL'], isCommandLineInterface()?false:true);
 }
 
 $e = new Encoder(@$_POST['id']);
 if(empty($e->getId())){
     if(!Login::canUpload()){
-        error_log("This user can not upload files");
+        $error = "This user can not upload files User=".Login::getStreamerUser()." URL=".Login::getStreamerURL();
+        if (isCommandLineInterface()) {
+            echo $error.PHP_EOL;
+        }
+        error_log($error);
         exit;
     }
    if (!($streamers_id = Login::getStreamerId())) {
-        error_log("There is no streamer site");
+        $error = "There is no streamer site";
+        if (isCommandLineInterface()) {
+            echo $error.PHP_EOL;
+        }
+        error_log($error);
         exit;
     }
     $e->setStreamers_id($streamers_id);
@@ -65,7 +78,5 @@ if(empty($e->getId())){
     $id = $e->save();
 }
 // start queue now
-$cmd = PHP_BINDIR."/php -f {$global['systemRootPath']}view/run.php > /dev/null 2>/dev/null &";
-//echo "** executing command {$cmd}\n";
-exec($cmd);
+execRun();
 echo json_encode($id);

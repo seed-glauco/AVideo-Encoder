@@ -47,6 +47,7 @@ if (!class_exists('Streamer')) {
         }
 
         static function createIfNotExists($user, $pass, $siteURL, $encodedPass = false) {
+            error_log("createIfNotExists:: $user");
             if (substr($siteURL, -1) !== '/') {
                 $siteURL .= "/";
             }
@@ -135,7 +136,11 @@ if (!class_exists('Streamer')) {
         }
 
         function getSiteURL() {
-            return $this->siteURL;
+            global $global;
+            if(!empty($global['forceStreamerSiteURL'])){
+                return trim($global['forceStreamerSiteURL']);
+            }
+            return trim($this->siteURL);
         }
 
         function getUser() {
